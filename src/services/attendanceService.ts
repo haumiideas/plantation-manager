@@ -9,6 +9,11 @@ import {
 } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, isFirebaseConfigured } from '../config/firebase';
+import {
+  executeCloudWriteOrQueue,
+  enqueueBatchSyncOperations,
+  isOnline,
+} from './syncQueueService';
 import { AttendanceRecord, AttendanceSummary, AttendanceStatus, EstateDayType } from '../types/attendance';
 import { PlantationWorker } from '../types/worker';
 import { FarmId } from '../types/farm';
@@ -166,14 +171,18 @@ export async function saveAttendanceRecord(
     const currentMap: Record<string, AttendanceRecord> = raw ? JSON.parse(raw) : {};
     currentMap[record.workerId] = record;
     await AsyncStorage.setItem(cacheKey, JSON.stringify(currentMap));
-
-    if (isFirebaseConfigured && db) {
-      const docRef = doc(db, ATTENDANCE_COLLECTION, record.id);
-      await setDoc(docRef, record, { merge: true });
-    }
   } catch (error) {
-    console.warn('[attendanceService] Saved locally; queued for cloud:', error);
+    console.warn('[attendanceService] Failed saving attendance locally:', error);
   }
+
+  // Attempt direct cloud write if online, or enqueue into persistent AsyncStorage queue
+  await executeCloudWriteOrQueue(
+    ATTENDANCE_COLLECTION,
+    record.id,
+    'set',
+    record,
+    { merge: true }
+  );
 }
 
 /**
@@ -216,9 +225,22 @@ export async function markAllWorkersPresent(
     updatedMap[worker.id] = record;
   });
 
-  await AsyncStorage.setItem(cacheKey, JSON.stringify(updatedMap));
+  try {
+    await AsyncStorage.setItem(cacheKey, JSON.stringify(updatedMap));
+  } catch (storageErr) {
+    console.warn('[attendanceService] Failed caching bulk attendance locally:', storageErr);
+  }
 
-  if (isFirebaseConfigured && db) {
+  const syncOps = Object.values(updatedMap).map((rec) => ({
+    collection: ATTENDANCE_COLLECTION,
+    docId: rec.id,
+    action: 'set' as const,
+    payload: rec,
+    options: { merge: true },
+  }));
+
+  const online = await isOnline();
+  if (isFirebaseConfigured && db && online) {
     try {
       const firestoreDb = db;
       const batch = writeBatch(firestoreDb);
@@ -227,9 +249,14 @@ export async function markAllWorkersPresent(
         batch.set(docRef, rec, { merge: true });
       });
       await batch.commit();
+      console.log(`[attendanceService] Successfully synced batch of ${syncOps.length} attendance records to cloud`);
     } catch (batchErr) {
-      console.warn('[attendanceService] Batch cached locally:', batchErr);
+      console.warn('[attendanceService] Batch write failed, queueing all for offline sync:', batchErr);
+      await enqueueBatchSyncOperations(syncOps);
     }
+  } else if (isFirebaseConfigured && db) {
+    console.log(`[attendanceService] Offline; queueing batch of ${syncOps.length} attendance records`);
+    await enqueueBatchSyncOperations(syncOps);
   }
 
   return updatedMap;

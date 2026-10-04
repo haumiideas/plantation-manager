@@ -6,6 +6,9 @@ import {
 } from '../types/activity';
 import { FarmId } from '../types/farm';
 import { logConsumption } from './equipmentService';
+import { executeCloudWriteOrQueue } from './syncQueueService';
+
+const ACTIVITIES_COLLECTION = 'field_activities';
 
 function getActivitiesKey(orgId: string): string {
   return `@plantation_activity_entries_${orgId}`;
@@ -243,6 +246,9 @@ export async function saveActivityEntry(
   } catch {
     // ignore
   }
+
+  await executeCloudWriteOrQueue(ACTIVITIES_COLLECTION, savedEntry.id, 'set', savedEntry);
+
   return savedEntry;
 }
 
@@ -258,4 +264,6 @@ export async function deleteActivityEntry(
   } catch {
     // ignore
   }
+
+  await executeCloudWriteOrQueue(ACTIVITIES_COLLECTION, id, 'delete');
 }

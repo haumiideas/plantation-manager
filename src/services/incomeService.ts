@@ -1,5 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { IncomeEntry, IncomeCategory } from '../types/income';
+import { executeCloudWriteOrQueue } from './syncQueueService';
+
+const INCOMES_COLLECTION = 'incomes';
 
 function getIncomeKey(orgId: string): string {
   return `@plantation_income_${orgId}`;
@@ -106,6 +109,9 @@ export async function saveIncomeEntry(
   }
 
   await AsyncStorage.setItem(key, JSON.stringify(current));
+
+  await executeCloudWriteOrQueue(INCOMES_COLLECTION, savedEntry.id, 'set', savedEntry);
+
   return savedEntry;
 }
 
@@ -114,6 +120,8 @@ export async function deleteIncomeEntry(orgId: string, id: string): Promise<void
   const current = await getIncomeEntries(orgId);
   const filtered = current.filter((i) => i.id !== id);
   await AsyncStorage.setItem(key, JSON.stringify(filtered));
+
+  await executeCloudWriteOrQueue(INCOMES_COLLECTION, id, 'delete');
 }
 
 export function calculateTotalIncome(entries: IncomeEntry[]): number {

@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, isFirebaseConfigured } from '../config/firebase';
+import { executeCloudWriteOrQueue } from './syncQueueService';
 import { PlantationWorker } from '../types/worker';
 
 const WORKERS_COLLECTION = 'workers';
@@ -227,14 +228,10 @@ export async function markWorkerLeftFarm(workerId: string): Promise<void> {
   );
   await AsyncStorage.setItem(LOCAL_WORKERS_STORAGE_KEY, JSON.stringify(updated));
 
-  if (isFirebaseConfigured && db) {
-    try {
-      const docRef = doc(db, WORKERS_COLLECTION, workerId);
-      await updateDoc(docRef, { status: 'left_farm', leftFarmDate: leftDate });
-    } catch (e) {
-      console.warn('[workerService] Cloud update queued');
-    }
-  }
+  await executeCloudWriteOrQueue(WORKERS_COLLECTION, workerId, 'update', {
+    status: 'left_farm',
+    leftFarmDate: leftDate,
+  });
 }
 
 /**
@@ -249,14 +246,9 @@ export async function reactivateWorker(workerId: string): Promise<void> {
   );
   await AsyncStorage.setItem(LOCAL_WORKERS_STORAGE_KEY, JSON.stringify(updated));
 
-  if (isFirebaseConfigured && db) {
-    try {
-      const docRef = doc(db, WORKERS_COLLECTION, workerId);
-      await updateDoc(docRef, { status: 'active' });
-    } catch (e) {
-      console.warn('[workerService] Cloud update queued');
-    }
-  }
+  await executeCloudWriteOrQueue(WORKERS_COLLECTION, workerId, 'update', {
+    status: 'active',
+  });
 }
 
 /**
@@ -278,17 +270,10 @@ export async function updateWorkerWageRates(
   );
   await AsyncStorage.setItem(LOCAL_WORKERS_STORAGE_KEY, JSON.stringify(updated));
 
-  if (isFirebaseConfigured && db) {
-    try {
-      const docRef = doc(db, WORKERS_COLLECTION, workerId);
-      await updateDoc(docRef, {
-        dailyWageRate: newDailyWage,
-        overtimeRatePerHour: newOtRate,
-      });
-    } catch (e) {
-      console.warn('[workerService] Cloud update queued');
-    }
-  }
+  await executeCloudWriteOrQueue(WORKERS_COLLECTION, workerId, 'update', {
+    dailyWageRate: newDailyWage,
+    overtimeRatePerHour: newOtRate,
+  });
 }
 
 /**
@@ -310,14 +295,7 @@ export async function addWorker(
   allWorkers.push(newWorker);
   await AsyncStorage.setItem(LOCAL_WORKERS_STORAGE_KEY, JSON.stringify(allWorkers));
 
-  if (isFirebaseConfigured && db) {
-    try {
-      const workerDocRef = doc(db, WORKERS_COLLECTION, newId);
-      await setDoc(workerDocRef, newWorker);
-    } catch (e) {
-      console.warn('[workerService] Saved locally; cloud sync queued');
-    }
-  }
+  await executeCloudWriteOrQueue(WORKERS_COLLECTION, newId, 'set', newWorker);
 
   return newWorker;
 }

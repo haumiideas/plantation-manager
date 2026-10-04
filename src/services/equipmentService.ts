@@ -6,6 +6,11 @@ import {
   EquipmentMuster,
 } from '../types/equipment';
 import { formatDate, parseEstateDate } from '../utils/date';
+import { executeCloudWriteOrQueue } from './syncQueueService';
+
+const CONSUMPTION_COLLECTION = 'consumption_logs';
+const EQUIPMENT_COLLECTION = 'equipment';
+const MUSTER_COLLECTION = 'equipment_muster';
 
 function getExpendablesKey(orgId: string): string {
   return `@plantation_expendables_${orgId}`;
@@ -313,6 +318,8 @@ export async function logConsumption(
   logs.unshift(newEntry);
   await AsyncStorage.setItem(getConsumptionKey(orgId), JSON.stringify(logs));
 
+  await executeCloudWriteOrQueue(CONSUMPTION_COLLECTION, newEntry.id, 'set', newEntry);
+
   return { success: true, entry: newEntry };
 }
 
@@ -323,6 +330,9 @@ export async function deleteConsumptionEntry(
   const logs = await getConsumptionEntries(orgId);
   const filtered = logs.filter((l) => l.id !== id);
   await AsyncStorage.setItem(getConsumptionKey(orgId), JSON.stringify(filtered));
+
+  await executeCloudWriteOrQueue(CONSUMPTION_COLLECTION, id, 'delete');
+
   return filtered;
 }
 
@@ -353,6 +363,9 @@ export async function saveEquipment(
     list.push(equipment);
   }
   await AsyncStorage.setItem(getEquipmentKey(orgId), JSON.stringify(list));
+
+  await executeCloudWriteOrQueue(EQUIPMENT_COLLECTION, equipment.id, 'set', equipment);
+
   return list;
 }
 
@@ -360,6 +373,9 @@ export async function deleteEquipment(orgId: string, id: string): Promise<FarmEq
   const list = await getFarmEquipment(orgId);
   const filtered = list.filter((e) => e.id !== id);
   await AsyncStorage.setItem(getEquipmentKey(orgId), JSON.stringify(filtered));
+
+  await executeCloudWriteOrQueue(EQUIPMENT_COLLECTION, id, 'delete');
+
   return filtered;
 }
 
@@ -436,5 +452,8 @@ export async function saveEquipmentMuster(
   const list = await getEquipmentMusters(orgId);
   list.unshift(muster);
   await AsyncStorage.setItem(getMusterKey(orgId), JSON.stringify(list));
+
+  await executeCloudWriteOrQueue(MUSTER_COLLECTION, muster.id, 'set', muster);
+
   return list;
 }

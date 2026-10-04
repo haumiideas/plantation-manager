@@ -4,7 +4,10 @@ import { saveExpense, deleteExpense } from './expenseService';
 import { saveIncomeEntry, deleteIncomeEntry } from './incomeService';
 import { upsertContactFromPartyOrVisitor } from './contactService';
 import { logAuditEvent } from './auditService';
+import { executeCloudWriteOrQueue } from './syncQueueService';
 import { ContactCategory } from '../types/contact';
+
+const VISITORS_COLLECTION = 'visitor_entries';
 
 function getVisitorsKey(orgId: string): string {
   return `@plantation_visitors_${orgId}`;
@@ -273,6 +276,8 @@ export async function saveVisitorEntry(
 
   await AsyncStorage.setItem(key, JSON.stringify(current));
 
+  await executeCloudWriteOrQueue(VISITORS_COLLECTION, savedEntry.id, 'set', savedEntry);
+
   logAuditEvent({
     orgId,
     performedByUid: 'user_local',
@@ -306,6 +311,8 @@ export async function deleteVisitorEntry(orgId: string, id: string): Promise<voi
 
   const filtered = current.filter((v) => v.id !== id);
   await AsyncStorage.setItem(key, JSON.stringify(filtered));
+
+  await executeCloudWriteOrQueue(VISITORS_COLLECTION, id, 'delete');
 
   logAuditEvent({
     orgId,

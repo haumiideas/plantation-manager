@@ -18,6 +18,7 @@ import { LanguageSelectModal } from './LanguageSelectModal';
 import { AuditTrailModal } from './AuditTrailModal';
 import { ReportExportModal } from '../export/ReportExportModal';
 import { formatDateWithDay, getDayOfWeekKey, formatDateLocalized } from '../../utils/date';
+import { subscribeToSyncQueue, flushSyncQueue } from '../../services/syncQueueService';
 
 const ESTATE_NAME_KEY = '@plantation_custom_estate_name';
 
@@ -28,6 +29,23 @@ export const AppHeader: React.FC = () => {
   const [showLangModal, setShowLangModal] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+
+  // Offline Sync State
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToSyncQueue((count, syncing) => {
+      setPendingSyncCount(count);
+      setIsSyncing(syncing);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleManualSync = () => {
+    if (isSyncing) return;
+    flushSyncQueue().catch((err) => console.warn('Manual sync failed:', err));
+  };
 
   // Estate name custom branding
   const [estateName, setEstateName] = useState('Farmag App');
@@ -117,6 +135,51 @@ export const AppHeader: React.FC = () => {
         </TouchableOpacity>
 
         <View style={styles.actionsContainer}>
+          {/* Offline Sync Status Indicator (Visible when pending writes exist or actively syncing) */}
+          {(pendingSyncCount > 0 || isSyncing) && (
+            <TouchableOpacity
+              style={[
+                styles.syncBadge,
+                {
+                  backgroundColor: isSyncing
+                    ? (isDark ? '#1E293B' : '#E0F2FE')
+                    : (isDark ? '#422006' : '#FEF3C7'),
+                  borderColor: isSyncing
+                    ? (isDark ? '#38BDF8' : '#0284C7')
+                    : (isDark ? '#D97706' : '#F59E0B'),
+                },
+              ]}
+              onPress={handleManualSync}
+              activeOpacity={0.7}
+              accessibilityLabel={
+                isSyncing
+                  ? t('syncingNow')
+                  : `${pendingSyncCount} ${t('pendingSync')}. ${t('tapToSync')}`
+              }
+              accessibilityRole="button"
+            >
+              <Ionicons
+                name={isSyncing ? 'sync' : 'cloud-offline-outline'}
+                size={12}
+                color={isSyncing ? (isDark ? '#38BDF8' : '#0284C7') : (isDark ? '#F59E0B' : '#D97706')}
+              />
+              <Text
+                style={[
+                  styles.syncBadgeText,
+                  {
+                    color: isSyncing
+                      ? (isDark ? '#BAE6FD' : '#0369A1')
+                      : (isDark ? '#FDE68A' : '#92400E'),
+                  },
+                ]}
+              >
+                {isSyncing
+                  ? t('syncingNow')
+                  : `${pendingSyncCount} ${t('pendingSync')}`}
+              </Text>
+            </TouchableOpacity>
+          )}
+
           {/* Role Badge (Tap to toggle demo role for quick evaluation) */}
           <TouchableOpacity
             style={[
@@ -359,6 +422,19 @@ const styles = StyleSheet.create({
     gap: 4,
     flexShrink: 1,
     justifyContent: 'flex-end',
+  },
+  syncBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  syncBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
   },
   roleBadge: {
     flexDirection: 'row',

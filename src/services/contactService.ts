@@ -1,5 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EstateContact, ContactCategory } from '../types/contact';
+import { executeCloudWriteOrQueue } from './syncQueueService';
+
+const CONTACTS_COLLECTION = 'contacts';
 
 function getContactsKey(orgId: string): string {
   return `@plantation_contacts_${orgId}`;
@@ -117,6 +120,9 @@ export async function saveEstateContact(
 
   const key = getContactsKey(orgId);
   await AsyncStorage.setItem(key, JSON.stringify(contacts));
+
+  await executeCloudWriteOrQueue(CONTACTS_COLLECTION, savedContact.id, 'set', savedContact);
+
   return savedContact;
 }
 
@@ -125,6 +131,8 @@ export async function deleteEstateContact(orgId: string, id: string): Promise<vo
   const filtered = contacts.filter((c) => c.id !== id);
   const key = getContactsKey(orgId);
   await AsyncStorage.setItem(key, JSON.stringify(filtered));
+
+  await executeCloudWriteOrQueue(CONTACTS_COLLECTION, id, 'delete');
 }
 
 export async function upsertContactFromPartyOrVisitor(

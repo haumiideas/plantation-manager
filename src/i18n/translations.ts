@@ -59,6 +59,10 @@ export const translations = {
     editFarmName: 'Edit Farm Name',
     workingDay: 'Working Day',
     estateHoliday: 'Estate Holiday / Rain Day',
+    pendingSync: 'pending sync',
+    syncingNow: 'Syncing...',
+    allSynced: 'All synced',
+    tapToSync: 'Tap to sync',
 
     // Dashboard & MIS
     plantationMIS: 'Plantation Operations MIS',
@@ -639,6 +643,10 @@ export const translations = {
     editFarmName: 'பண்ணை பெயரை மாற்றுக',
     workingDay: 'வேலை நாள்',
     estateHoliday: 'பண்ணை விடுமுறை / மழை நாள்',
+    pendingSync: 'ஒத்திசைவு நிலுவையில்',
+    syncingNow: 'ஒத்திசைக்கிறது...',
+    allSynced: 'அனைத்தும் ஒத்திசைக்கப்பட்டது',
+    tapToSync: 'ஒத்திசைக்க தட்டவும்',
 
     // Dashboard & MIS
     plantationMIS: 'பண்ணை செயல்பாடுகள் தகவல் அமைப்பு (MIS)',
@@ -1219,6 +1227,10 @@ export const translations = {
     editFarmName: 'തോട്ടത്തിന്റെ പേര് മാറ്റുക',
     workingDay: 'പ്രവൃത്തി ദിനം',
     estateHoliday: 'തോട്ടം അവധി / മഴ ദിനം',
+    pendingSync: 'സമന്വയം ബാക്കി',
+    syncingNow: 'സമന്വയിപ്പിക്കുന്നു...',
+    allSynced: 'എല്ലാം സമന്വയിപ്പിച്ചു',
+    tapToSync: 'സമന്വയിപ്പിക്കാൻ അമർത്തുക',
 
     // Dashboard & MIS
     plantationMIS: 'തോട്ടം പ്രവർത്തന വിവരങ്ങൾ (MIS)',

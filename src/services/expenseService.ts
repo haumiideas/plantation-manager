@@ -2,6 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ExpenseEntry, PeriodType, ExpenseCategory } from '../types/expense';
 import { isDateInPeriod } from '../utils/date';
 import { addStockToExpendable } from './equipmentService';
+import { executeCloudWriteOrQueue } from './syncQueueService';
+
+const EXPENSES_COLLECTION = 'expenses';
 
 function getExpensesKey(orgId: string): string {
   return `@plantation_expenses_${orgId}`;
@@ -159,6 +162,8 @@ export async function saveExpense(
     }
   }
 
+  await executeCloudWriteOrQueue(EXPENSES_COLLECTION, entry.id, 'set', entry);
+
   return list;
 }
 
@@ -166,6 +171,9 @@ export async function deleteExpense(orgId: string, id: string): Promise<ExpenseE
   const list = await getExpenses(orgId);
   const filtered = list.filter((e) => e.id !== id);
   await AsyncStorage.setItem(getExpensesKey(orgId), JSON.stringify(filtered));
+
+  await executeCloudWriteOrQueue(EXPENSES_COLLECTION, id, 'delete');
+
   return filtered;
 }
 

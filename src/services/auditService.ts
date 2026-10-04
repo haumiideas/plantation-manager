@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, isFirebaseConfigured } from '../config/firebase';
-import { collection, doc, setDoc } from 'firebase/firestore';
+import { executeCloudWriteOrQueue } from './syncQueueService';
 
 export interface AuditEvent {
   id: string;
@@ -46,14 +46,7 @@ export async function logAuditEvent(
     // continue
   }
 
-  if (isFirebaseConfigured && db) {
-    try {
-      const docRef = doc(db, AUDIT_COLLECTION, auditEvent.id);
-      await setDoc(docRef, auditEvent);
-    } catch {
-      // offline fallback
-    }
-  }
+  await executeCloudWriteOrQueue(AUDIT_COLLECTION, auditEvent.id, 'set', auditEvent);
 
   return auditEvent;
 }

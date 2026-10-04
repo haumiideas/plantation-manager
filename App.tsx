@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo, ReactNode, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,6 +7,7 @@ import { AuthProvider } from './src/context/AuthContext';
 import { FarmProvider } from './src/context/FarmContext';
 import { LanguageProvider } from './src/context/LanguageContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { initSyncQueueListener } from './src/services/syncQueueService';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -55,6 +56,11 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 }
 
 export default function App() {
+  useEffect(() => {
+    const cleanup = initSyncQueueListener();
+    return () => cleanup();
+  }, []);
+
   return (
     <SafeAreaProvider>
       <ErrorBoundary>

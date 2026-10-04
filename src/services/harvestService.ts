@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, isFirebaseConfigured } from '../config/firebase';
+import { executeCloudWriteOrQueue } from './syncQueueService';
 import { FarmId } from '../types/farm';
 import { CropConfig, CROPS_CONFIG } from '../types/crop';
 import {
@@ -470,13 +471,7 @@ export async function saveHarvestEntry(
     // continue
   }
 
-  if (isFirebaseConfigured && db) {
-    try {
-      await setDoc(doc(db, HARVEST_COLLECTION, newEntry.id), newEntry);
-    } catch (e) {
-      // Saved locally
-    }
-  }
+  await executeCloudWriteOrQueue(HARVEST_COLLECTION, newEntry.id, 'set', newEntry);
 
   return newEntry;
 }
@@ -502,13 +497,7 @@ export async function updateHarvestEntry(entry: HarvestEntry): Promise<HarvestEn
     // continue
   }
 
-  if (isFirebaseConfigured && db) {
-    try {
-      await setDoc(doc(db, HARVEST_COLLECTION, entry.id), updatedEntry);
-    } catch (e) {
-      // updated locally
-    }
-  }
+  await executeCloudWriteOrQueue(HARVEST_COLLECTION, entry.id, 'set', updatedEntry);
 
   return updatedEntry;
 }
@@ -526,13 +515,7 @@ export async function deleteHarvestEntry(orgId: string, entryId: string): Promis
     // continue
   }
 
-  if (isFirebaseConfigured && db) {
-    try {
-      await deleteDoc(doc(db, HARVEST_COLLECTION, entryId));
-    } catch (e) {
-      // delete locally
-    }
-  }
+  await executeCloudWriteOrQueue(HARVEST_COLLECTION, entryId, 'delete');
 }
 
 // -------------------------------------------------------------
@@ -705,13 +688,7 @@ export async function createCuringBatch(
     // continue
   }
 
-  if (isFirebaseConfigured && db) {
-    try {
-      await setDoc(doc(db, CURING_COLLECTION, newBatch.id), newBatch);
-    } catch (e) {
-      // saved locally
-    }
-  }
+  await executeCloudWriteOrQueue(CURING_COLLECTION, newBatch.id, 'set', newBatch);
 
   return newBatch;
 }
@@ -732,11 +709,7 @@ export async function updateCuringBatch(
     }
   } catch {}
 
-  if (isFirebaseConfigured && db) {
-    try {
-      await setDoc(doc(db, CURING_COLLECTION, batch.id), batch, { merge: true });
-    } catch {}
-  }
+  await executeCloudWriteOrQueue(CURING_COLLECTION, batch.id, 'set', batch, { merge: true });
   return batch;
 }
 
@@ -854,12 +827,8 @@ export async function addFiringLog(
     // continue
   }
 
-  if (updatedBatch && isFirebaseConfigured && db) {
-    try {
-      await setDoc(doc(db, CURING_COLLECTION, batchId), updatedBatch);
-    } catch (e) {
-      // local updated
-    }
+  if (updatedBatch) {
+    await executeCloudWriteOrQueue(CURING_COLLECTION, batchId, 'set', updatedBatch);
   }
 
   return updatedBatch;
@@ -937,12 +906,8 @@ export async function completeCuringBatch(
     // continue
   }
 
-  if (updatedBatch && isFirebaseConfigured && db) {
-    try {
-      await setDoc(doc(db, CURING_COLLECTION, batchId), updatedBatch);
-    } catch (e) {
-      // local updated
-    }
+  if (updatedBatch) {
+    await executeCloudWriteOrQueue(CURING_COLLECTION, batchId, 'set', updatedBatch);
   }
 
   return updatedBatch;
@@ -997,13 +962,7 @@ export async function createPepperBatch(
     // continue
   }
 
-  if (isFirebaseConfigured && db) {
-    try {
-      await setDoc(doc(db, PEPPER_COLLECTION, newBatch.id), newBatch);
-    } catch (e) {
-      // saved locally
-    }
-  }
+  await executeCloudWriteOrQueue(PEPPER_COLLECTION, newBatch.id, 'set', newBatch);
 
   return newBatch;
 }
@@ -1043,6 +1002,10 @@ export async function completePepperBatch(
     }
   } catch (err) {
     // continue
+  }
+
+  if (updatedBatch) {
+    await executeCloudWriteOrQueue(PEPPER_COLLECTION, batchId, 'set', updatedBatch);
   }
 
   return updatedBatch;
