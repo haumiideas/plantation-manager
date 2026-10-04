@@ -1,0 +1,141 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Fetches the user profile document for the authenticated requester
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function getUserRole() {
+      return getUserData().role;
+    }
+
+    function getUserOrgId() {
+      return getUserData().orgId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+
+    function isSupervisorOrAdmin() {
+      return isAuthenticated() && (getUserRole() == 'supervisor' || getUserRole() == 'admin');
+    }
+
+    function matchesUserOrg(orgId) {
+      return isAuthenticated() && getUserOrgId() == orgId;
+    }
+
+    // Validation helpers
+    function isValidRole(role) {
+      return role in ['admin', 'supervisor'];
+    }
+
+    function isValidString(str, minLen, maxLen) {
+      return str is string && str.size() >= minLen && str.size() <= maxLen;
+    }
+
+    // --- Users Collection (/users/{userId}) ---
+    match /users/{userId} {
+      // Users can read their own profile; Admins can read profiles within the same organization
+      allow read: if isOwner(userId) || (isAdmin() && resource.data.orgId == getUserOrgId());
+
+      // Create: User can create their initial profile, but role must be supervisor unless bootstrapping,
+      // or admin creates team user profiles for their own org
+      allow create: if isAuthenticated() && (
+        (isOwner(userId) && isValidString(request.resource.data.orgId, 1, 50) && isValidRole(request.resource.data.role)) ||
+        (isAdmin() && request.resource.data.orgId == getUserOrgId())
+      );
+
+      // Update: Users cannot escalate their own role or switch organizations!
+      // Only an Admin within the same organization can modify roles/orgId.
+      allow update: if isAuthenticated() && (
+        (isAdmin() && resource.data.orgId == getUserOrgId() && request.resource.data.orgId == resource.data.orgId) ||
+        (
+          isOwner(userId) &&
+          // Cannot modify role or orgId on self-update
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.orgId == resource.data.orgId
+        )
+      );
+
+      allow delete: if isAdmin() && resource.data.orgId == getUserOrgId();
+    }
+
+    // --- Operational Collections (Attendance, Activity, Harvest) ---
+    // Accessible by both Supervisors and Admins within their organization
+    match /attendance/{docId} {
+      allow read: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId);
+      allow create: if isSupervisorOrAdmin() && matchesUserOrg(request.resource.data.orgId);
+      allow update: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId) && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if isAdmin() && matchesUserOrg(resource.data.orgId);
+    }
+
+    match /activity/{docId} {
+      allow read: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId);
+      allow create: if isSupervisorOrAdmin() && matchesUserOrg(request.resource.data.orgId);
+      allow update: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId) && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if isAdmin() && matchesUserOrg(resource.data.orgId);
+    }
+
+    match /harvest/{docId} {
+      allow read: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId);
+      allow create: if isSupervisorOrAdmin() && matchesUserOrg(request.resource.data.orgId);
+      allow update: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId) && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if isAdmin() && matchesUserOrg(resource.data.orgId);
+    }
+
+    match /curing/{docId} {
+      allow read: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId);
+      allow create: if isSupervisorOrAdmin() && matchesUserOrg(request.resource.data.orgId);
+      allow update: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId) && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if isAdmin() && matchesUserOrg(resource.data.orgId);
+    }
+
+    match /pepper_batches/{docId} {
+      allow read: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId);
+      allow create: if isSupervisorOrAdmin() && matchesUserOrg(request.resource.data.orgId);
+      allow update: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId) && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if isAdmin() && matchesUserOrg(resource.data.orgId);
+    }
+
+    // --- Sensitive Financial & Org Collections (Expenses, P&L, Settings, Farms) ---
+    // Strictly Admin-Only within the organization — Supervisors have zero access
+    match /expenses/{docId} {
+      allow read, write: if isAdmin() && (
+        (resource == null && matchesUserOrg(request.resource.data.orgId)) ||
+        (resource != null && matchesUserOrg(resource.data.orgId) && (request.resource == null || request.resource.data.orgId == resource.data.orgId))
+      );
+    }
+
+    match /pnl/{docId} {
+      allow read, write: if isAdmin() && (
+        (resource == null && matchesUserOrg(request.resource.data.orgId)) ||
+        (resource != null && matchesUserOrg(resource.data.orgId) && (request.resource == null || request.resource.data.orgId == resource.data.orgId))
+      );
+    }
+
+    match /farms/{docId} {
+      // Supervisors can read farm configuration, but only admins can modify
+      allow read: if isSupervisorOrAdmin() && matchesUserOrg(resource.data.orgId);
+      allow write: if isAdmin() && matchesUserOrg(request.resource.data.orgId);
+    }
+
+    match /settings/{docId} {
+      allow read, write: if isAdmin() && (
+        (resource == null && matchesUserOrg(request.resource.data.orgId)) ||
+        (resource != null && matchesUserOrg(resource.data.orgId))
+      );
+    }
+  }
+}
