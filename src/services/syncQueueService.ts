@@ -19,6 +19,33 @@ export interface SyncOperation {
 
 export const SYNC_QUEUE_KEY = '@plantation_pending_sync';
 
+/**
+ * Asynchronous mutex lock to serialize read-modify-write operations against AsyncStorage.
+ * Prevents race conditions where concurrent writes or flushes overwrite/drop queue items.
+ */
+class AsyncQueueLock {
+  private queue: Promise<any> = Promise.resolve();
+
+  acquire<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue = this.queue
+        .then(async () => {
+          try {
+            const result = await task();
+            resolve(result);
+          } catch (err) {
+            reject(err);
+          }
+        })
+        .catch(() => {
+          // Keep lock queue operational even if a previous task rejected
+        });
+    });
+  }
+}
+
+const queueLock = new AsyncQueueLock();
+
 // In-memory queue listener registry
 type SyncQueueListener = (pendingCount: number, isSyncing: boolean) => void;
 const listeners: Set<SyncQueueListener> = new Set();
@@ -81,61 +108,67 @@ export async function isOnline(): Promise<boolean> {
 }
 
 /**
- * Enqueues a write operation into persistent AsyncStorage for deferred cloud replay
+ * Enqueues a write operation into persistent AsyncStorage for deferred cloud replay.
+ * Uses an AsyncQueueLock mutex to ensure atomic read-modify-write without race conditions.
  */
 export async function enqueueSyncOperation(
   op: Omit<SyncOperation, 'id' | 'timestamp' | 'retryCount'>
 ): Promise<void> {
-  const queue = await getPendingSyncOperations();
-  const newOp: SyncOperation = {
-    ...op,
-    id: `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    timestamp: Date.now(),
-    retryCount: 0,
-  };
-
-  // Replace existing pending operation for the same doc if safe, or append FIFO
-  const existingIdx = queue.findIndex(
-    (item) => item.collection === newOp.collection && item.docId === newOp.docId
-  );
-
-  if (existingIdx >= 0 && newOp.action !== 'delete' && queue[existingIdx].action !== 'delete') {
-    // Merge newer updates to avoid redundant writes
-    queue[existingIdx] = {
-      ...queue[existingIdx],
-      payload: { ...queue[existingIdx].payload, ...newOp.payload },
+  return queueLock.acquire(async () => {
+    const queue = await getPendingSyncOperations();
+    const newOp: SyncOperation = {
+      ...op,
+      id: `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       timestamp: Date.now(),
+      retryCount: 0,
     };
-  } else {
-    queue.push(newOp);
-  }
 
-  await saveSyncQueue(queue);
-  notifyListeners(queue.length, isFlushingQueue);
-  console.log(`[syncQueueService] Enqueued op (${newOp.action} ${newOp.collection}/${newOp.docId}). Total pending: ${queue.length}`);
+    // Replace existing pending operation for the same doc if safe, or append FIFO
+    const existingIdx = queue.findIndex(
+      (item) => item.collection === newOp.collection && item.docId === newOp.docId
+    );
+
+    if (existingIdx >= 0 && newOp.action !== 'delete' && queue[existingIdx].action !== 'delete') {
+      // Merge newer updates to avoid redundant writes
+      queue[existingIdx] = {
+        ...queue[existingIdx],
+        payload: { ...queue[existingIdx].payload, ...newOp.payload },
+        timestamp: Date.now(),
+      };
+    } else {
+      queue.push(newOp);
+    }
+
+    await saveSyncQueue(queue);
+    notifyListeners(queue.length, isFlushingQueue);
+    console.log(`[syncQueueService] Enqueued op (${newOp.action} ${newOp.collection}/${newOp.docId}). Total pending: ${queue.length}`);
+  });
 }
 
 /**
- * Atomically enqueues multiple operations (e.g. bulk attendance marking)
+ * Atomically enqueues multiple operations (e.g. bulk attendance marking).
+ * Uses an AsyncQueueLock mutex to guarantee atomic persistence.
  */
 export async function enqueueBatchSyncOperations(
   ops: Array<Omit<SyncOperation, 'id' | 'timestamp' | 'retryCount'>>
 ): Promise<void> {
   if (ops.length === 0) return;
-  const queue = await getPendingSyncOperations();
+  return queueLock.acquire(async () => {
+    const queue = await getPendingSyncOperations();
 
-  ops.forEach((op) => {
-    queue.push({
-      ...op,
-      id: `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      timestamp: Date.now(),
-      retryCount: 0,
+    ops.forEach((op) => {
+      queue.push({
+        ...op,
+        id: `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: Date.now(),
+        retryCount: 0,
+      });
     });
-  });
 
-  await saveSyncQueue(queue);
-  notifyListeners(queue.length, isFlushingQueue);
-  console.log(`[syncQueueService] Batch enqueued ${ops.length} ops. Total pending: ${queue.length}`);
+    await saveSyncQueue(queue);
+    notifyListeners(queue.length, isFlushingQueue);
+    console.log(`[syncQueueService] Batch enqueued ${ops.length} ops. Total pending: ${queue.length}`);
+  });
 }
 
 /**
@@ -201,6 +234,7 @@ export async function executeCloudWriteOrQueue(
 /**
  * Replays all pending writes against Firestore in FIFO order.
  * Items are removed from the persistent queue ONLY after confirmed successful write.
+ * Queue modifications are serialized with AsyncQueueLock to prevent race conditions with new enqueues.
  */
 export async function flushSyncQueue(): Promise<{ success: number; failed: number }> {
   if (isFlushingQueue) {
@@ -222,18 +256,25 @@ export async function flushSyncQueue(): Promise<{ success: number; failed: numbe
   }
 
   isFlushingQueue = true;
-  let queue = await getPendingSyncOperations();
-  notifyListeners(queue.length, true);
+  const initialQueue = await getPendingSyncOperations();
+  notifyListeners(initialQueue.length, true);
 
   let successCount = 0;
   let failedCount = 0;
   const firestoreDb = db;
 
-  console.log(`[syncQueueService] Starting queue flush for ${queue.length} pending operations...`);
+  console.log(`[syncQueueService] Starting queue flush for ${initialQueue.length} pending operations...`);
 
   // Process sequentially in FIFO order
-  while (queue.length > 0) {
-    const op = queue[0];
+  while (true) {
+    // Atomically peek the current head of the queue under lock
+    const op = await queueLock.acquire(async () => {
+      const q = await getPendingSyncOperations();
+      return q.length > 0 ? q[0] : null;
+    });
+
+    if (!op) break;
+
     const docRef = doc(firestoreDb, op.collection, op.docId);
     let opSuccess = false;
 
@@ -255,20 +296,26 @@ export async function flushSyncQueue(): Promise<{ success: number; failed: numbe
 
     if (opSuccess) {
       successCount++;
-      // Re-read queue to ensure concurrency safety and remove the processed head
-      const latestQueue = await getPendingSyncOperations();
-      queue = latestQueue.filter((item) => item.id !== op.id);
-      await saveSyncQueue(queue);
-      notifyListeners(queue.length, true);
-      console.log(`[syncQueueService] Successfully synced op ${op.id} (${op.collection}/${op.docId}). Remaining: ${queue.length}`);
+      // Atomically remove the processed head from persistent storage under lock
+      const remainingCount = await queueLock.acquire(async () => {
+        const latestQueue = await getPendingSyncOperations();
+        const updated = latestQueue.filter((item) => item.id !== op.id);
+        await saveSyncQueue(updated);
+        notifyListeners(updated.length, true);
+        return updated.length;
+      });
+      console.log(`[syncQueueService] Successfully synced op ${op.id} (${op.collection}/${op.docId}). Remaining: ${remainingCount}`);
     } else {
-      // Replay failed: update retry count in persistent storage
-      const latestQueue = await getPendingSyncOperations();
-      const updatedLatest = latestQueue.map((item) => (item.id === op.id ? op : item));
-      await saveSyncQueue(updatedLatest);
+      // Replay failed: update retry count in persistent storage under lock
+      const remainingCount = await queueLock.acquire(async () => {
+        const latestQueue = await getPendingSyncOperations();
+        const updated = latestQueue.map((item) => (item.id === op.id ? op : item));
+        await saveSyncQueue(updated);
+        return updated.length;
+      });
 
       // Stop flushing the rest of the queue to preserve FIFO ordering!
-      console.warn(`[syncQueueService] Halting queue flush to preserve FIFO ordering. Remaining: ${updatedLatest.length}`);
+      console.warn(`[syncQueueService] Halting queue flush to preserve FIFO ordering. Remaining: ${remainingCount}`);
       break;
     }
   }
